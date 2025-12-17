@@ -1,8 +1,5 @@
 ---@diagnostic disable: undefined-global
 
-print(love.graphics.getRendererInfo())
-
-
 math.randomseed(os.time())
 
 local Input = require("TiPiL.input")
