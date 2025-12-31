@@ -24,6 +24,7 @@ game_common.STATES = {
     DEAD = "dead",
     OVER = "over",
     PAUSED = "paused",
+    UPGRADE = "upgrade"
 }
 
 -- Standard input handling

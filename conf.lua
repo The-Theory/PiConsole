@@ -10,4 +10,6 @@ function love.conf(t)
     t.window.vsync = 1
     t.window.console = true
     t.window.cursor = false
+    t.window.borderless = true
+    t.window.icon = "games/override/icon.png"
 end

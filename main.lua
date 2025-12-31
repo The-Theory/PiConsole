@@ -11,77 +11,77 @@ local ui = nil
 local scenes = {}
 local selectedIndex = 1
 local currentSceneModuleName = nil
-local thumbnails = {}  -- Cached thumbnails
+local thumbnails = {}  -- cache
 
--- Constants
+-- Fade transitions
+local transition = {
+    state = "none",  -- none | fading_out | fading_in | black
+    progress = 0.0,
+    duration = 0.3,  -- per phase
+    pendingAction = nil,
+}
+
+-- Config
 local LAUNCHER_CONFIG = {
     COLS_VISIBLE = 3,
     ROWS_VISIBLE = 2,
     INPUT_THRESHOLD = 0.6,
-    CARD_SPACING = 18,  -- Space between cards
+    CARD_SPACING = 18,
 }
 
-local lastDir = { x = 0, y = 0 }  -- Previous frame dir
+local lastDir = { x = 0, y = 0 }
 local lastSelectedIndex = 1
-local selectionTime = 0.0  -- For anim timing
-local gridAnimTime = 0.0   -- BG grid anim
-local cardScales = {}      -- Per-card scale
+local selectionTime = 0.0
+local gridAnimTime = 0.0
+local cardScales = {}
 
--- Grid
 local tileDimensions = {}
 local grid = {
     colsVisible = LAUNCHER_CONFIG.COLS_VISIBLE,
     rowsVisible = LAUNCHER_CONFIG.ROWS_VISIBLE,
-    firstVisibleRow = 0    -- First row currently visible (for scrolling)
+    firstVisibleRow = 0
 }
 
 local function getThumbnail(info)
     local key = info.module
     local cached = thumbnails[key]
-
-    -- Return cached result 
     if cached ~= nil then return cached end
 
-    -- Find icon
     local _, img = pcall(love.graphics.newImage, info.assetBase .. "/icon.png")
-    img:setFilter("nearest") 
+    img:setFilter("nearest")
+    thumbnails[key] = img
     return img
 end
 
 local launch
 local function launcher_load()
-    -- UI and Input
     ui = UI.new("Launcher")
     ui:setupWindow()
     love.window.setMode(480, 320, {msaa = 2})
     input = Input.new()
 
-    -- Tile dimensions
+    -- Calc card sizes
     local w, h = ui:getScreen()
     local cardSpacing = LAUNCHER_CONFIG.CARD_SPACING
     local tileW = (w - ui.pad * 2 - cardSpacing * (grid.colsVisible - 1)) / grid.colsVisible
     local tileH = (h - ui.pad * 2 - cardSpacing * (grid.rowsVisible - 1)) / grid.rowsVisible
-    local originX = ui.pad
-    local originY = ui.pad
     tileDimensions = {
         width = tileW,
         height = tileH,
-        originX = originX,
-        originY = originY,
+        originX = ui.pad,
+        originY = ui.pad,
     }
 
-    -- Games
+    -- Scan games folder
     scenes = {}
     local files = love.filesystem.getDirectoryItems("games")
     table.sort(files)
     for _, file in ipairs(files) do
-        local path = "games/" .. file .. "/"
-        local fileInfo = love.filesystem.getInfo(path .. "main.lua")
-
-        -- Skip hidden files
-        if (file:sub(1, 1) ~= ".") then
+        if file:sub(1, 1) ~= "." then
+            local path = "games/" .. file .. "/"
+            local fileInfo = love.filesystem.getInfo(path .. "main.lua")
             table.insert(scenes, {
-                name = file:gsub("_", " "):gsub("%f[%a].", string.upper),  -- Space to _ and capitalize
+                name = file:gsub("_", " "):gsub("%f[%a].", string.upper),
                 module = "games." .. file .. ".main",
                 assetBase = path,
                 implemented = fileInfo ~= nil
@@ -90,12 +90,61 @@ local function launcher_load()
     end
 end
 
+local function updateTransition(dt)
+    if transition.state == "none" then return end
+    
+    transition.progress = transition.progress + dt / transition.duration
+    
+    if transition.state == "fading_out" then
+        if transition.progress >= 1.0 then
+            transition.progress = 0.0
+            transition.state = "black"
+            
+            if transition.pendingAction then
+                transition.pendingAction()
+                transition.pendingAction = nil
+            end
+            
+            transition.state = "fading_in"
+        end
+    elseif transition.state == "fading_in" then
+        if transition.progress >= 1.0 then
+            transition.progress = 0.0
+            transition.state = "none"
+        end
+    end
+end
+
+local function drawTransition()
+    if transition.state == "none" or not ui then return end
+    
+    love.graphics.origin()  -- screen coords
+    
+    local w, h = ui:getScreen()
+    local alpha = 0.0
+    
+    if transition.state == "fading_out" then
+        alpha = math.min(transition.progress, 1.0)
+    elseif transition.state == "black" then
+        alpha = 1.0
+    elseif transition.state == "fading_in" then
+        alpha = 1.0 - math.min(transition.progress, 1.0)
+    end
+    
+    if alpha > 0 then
+        love.graphics.setColor(0, 0, 0, alpha)
+        love.graphics.rectangle("fill", 0, 0, w, h)
+    end
+end
+
 local function launcher_update(dt)
-    -- Update input state
+    updateTransition(dt)
+    if transition.state ~= "none" then return end  -- block input during fade
+    
     if not input then return end
     input:update(dt)
     
-    -- Reset anim on selection change
+    -- Selection anim
     if selectedIndex ~= lastSelectedIndex then
         selectionTime = 0.0
         lastSelectedIndex = selectedIndex
@@ -103,7 +152,7 @@ local function launcher_update(dt)
         selectionTime = selectionTime + dt
     end
     
-    -- Card scale anim
+    -- Card scale lerp
     local selectedScaleTarget = 1.04
     local unselectedScaleTarget = 0.92
     local animSpeed = 12.0
@@ -111,11 +160,8 @@ local function launcher_update(dt)
     for i = 1, #scenes do
         local target = (i == selectedIndex) and selectedScaleTarget or unselectedScaleTarget
         local current = cardScales[i] or unselectedScaleTarget
-        
-        -- Exp lerp
         local newScale = current + (target - current) * (1 - math.exp(-animSpeed * dt))
         
-        -- Snap when close
         if math.abs(newScale - target) < 0.001 then
             newScale = target
         end
@@ -125,31 +171,27 @@ local function launcher_update(dt)
     
     gridAnimTime = gridAnimTime + dt
     
+    -- Input handling
     local worldX, worldY = input:getAxis()
     local threshold = LAUNCHER_CONFIG.INPUT_THRESHOLD
     local dirX = 0
     local dirY = 0
     
-    -- Joystick threshold check
     if      worldX > threshold then     dirX = 1
     elseif  worldX < -threshold then    dirX = -1 end
-    ----
     if      worldY > threshold then     dirY = 1
     elseif  worldY < -threshold then    dirY = -1 end
 
-    -- Move on edge trigger only
-    -- Horiz
+    -- Edge trigger only
     if dirX ~= 0 and lastDir.x == 0 then
         if dirX > 0 then selectedIndex = math.min(#scenes, selectedIndex + 1)
         elseif dirX < 0 then selectedIndex = math.max(1, selectedIndex - 1) end
     end
-    -- Vert
     if dirY ~= 0 and lastDir.y == 0 then
         if dirY > 0 then selectedIndex = math.min(#scenes, selectedIndex + grid.colsVisible) 
         elseif dirY < 0 then selectedIndex = math.max(1, selectedIndex - grid.colsVisible) end
     end
     
-    -- Update last dir
     lastDir.x = dirX
     lastDir.y = dirY
 
@@ -167,12 +209,10 @@ local function launcher_draw()
     
     ui:clear()
     
-    -- BG grid
+    -- Animated bg grid
     local w, h = ui:getScreen()
     love.graphics.setColor(1, 1, 1, 0.025)
     local gridSize = 20
-    
-    -- Drift offset
     local speed = 8
     local offsetX = (gridAnimTime * speed) % gridSize
     local offsetY = (gridAnimTime * speed * 0.7) % gridSize
@@ -184,7 +224,7 @@ local function launcher_draw()
         love.graphics.line(0, gy, w, gy)
     end
     
-    -- Scroll
+    -- Scroll to selection
     local selRow = math.floor((selectedIndex - 1) / grid.colsVisible)
     if selRow < grid.firstVisibleRow then
         grid.firstVisibleRow = selRow
@@ -193,12 +233,12 @@ local function launcher_draw()
         grid.firstVisibleRow = selRow - (grid.rowsVisible - 1)
     end
     
-    -- Glow easing
+    -- Glow ease
     local animDuration = 0.15
     local animProgress = math.min(selectionTime / animDuration, 1.0)
     local easeOut = 1.0 - (1.0 - animProgress) ^ 3
     
-    -- Draw tiles
+    -- Draw game cards
     for r = 0, grid.rowsVisible - 1 do
         for c = 0, grid.colsVisible - 1 do
             local i = (grid.firstVisibleRow + r) * grid.colsVisible + c + 1
@@ -216,7 +256,7 @@ local function launcher_draw()
             local x = baseX - (cardW - tileDimensions.width) * 0.5
             local y = baseY - (cardH - tileDimensions.height) * 0.5
 
-            -- Glow
+            -- Glow layers
             if isSel then
                 local glowLayers = 8
                 local glowSpread = 18
@@ -243,13 +283,13 @@ local function launcher_draw()
             love.graphics.setColor(bgBrightness, bgBrightness, bgBrightness + 0.01, 1.0)
             love.graphics.rectangle("fill", x, y, cardW, cardH, 0, 0)
             
-            -- Gradient overlay
+            -- Gradients
             love.graphics.setColor(0, 0, 0, 0.1)
             love.graphics.rectangle("fill", x, y + cardH * 0.6, cardW, cardH * 0.4, 0, 0)
             love.graphics.setColor(0, 0, 0, 0.05)
             love.graphics.rectangle("fill", x, y, cardW, cardH * 0.3, 0, 0)
             
-            -- Card border
+            -- Border
             local borderWidth = isSel and 2 or 1
             local borderColor = isSel and UI.colors.primary or {0.25, 0.25, 0.26}
             local borderAlpha = isSel and 0.6 or 0.3
@@ -262,13 +302,13 @@ local function launcher_draw()
             if isSel then
                 local cs = 4
                 love.graphics.setColor(UI.colors.primary[1], UI.colors.primary[2], UI.colors.primary[3], 0.8)
-                love.graphics.rectangle("fill", x, y, cs, cs, 0, 0)                         -- TL
-                love.graphics.rectangle("fill", x + cardW - cs, y, cs, cs, 0, 0)            -- TR
-                love.graphics.rectangle("fill", x, y + cardH - cs, cs, cs, 0, 0)            -- BL
-                love.graphics.rectangle("fill", x + cardW - cs, y + cardH - cs, cs, cs, 0, 0) -- BR
+                love.graphics.rectangle("fill", x, y, cs, cs, 0, 0)
+                love.graphics.rectangle("fill", x + cardW - cs, y, cs, cs, 0, 0)
+                love.graphics.rectangle("fill", x, y + cardH - cs, cs, cs, 0, 0)
+                love.graphics.rectangle("fill", x + cardW - cs, y + cardH - cs, cs, cs, 0, 0)
             end
 
-            -- Thumb
+            -- Icon
             local padIn = 10
             local thumbX = x + padIn
             local thumbY = y + padIn + 4
@@ -276,7 +316,6 @@ local function launcher_draw()
             local thumbH = cardH - padIn * 2 - 28
             local thumb = getThumbnail(info)
 
-            -- Fit + center
             local iw, ih = thumb:getWidth(), thumb:getHeight()
             local scale = math.min(thumbW / iw, thumbH / ih)
             local dx = thumbX + (thumbW - iw * scale) * 0.5
@@ -285,7 +324,7 @@ local function launcher_draw()
             love.graphics.setColor(1, 1, 1, isSel and 0.95 or 0.85)
             love.graphics.draw(thumb, dx, dy, 0, scale, scale)
 
-            -- Name
+            -- Title
             local nameY = y + cardH - 26
             love.graphics.setFont(ui.fonts.title)
             love.graphics.setColor(0, 0, 0, 0.5)
@@ -293,7 +332,7 @@ local function launcher_draw()
             love.graphics.setColor(isSel and UI.colors.primaryBright or UI.colors.textDim)
             love.graphics.printf(info.name, x, nameY, cardW, "center")
             
-            -- Hint
+            -- Hint text
             if isSel then
                 local instructionY = nameY + ui.fonts.title:getHeight() + 8
                 love.graphics.setFont(ui.fonts.small)
@@ -315,56 +354,71 @@ local function launcher_draw()
             end
         end
     end
+    
+    drawTransition()
 end
 
 local function returnToLauncher()
-    -- Cleanup game
-    if currentSceneModuleName then
-        local mod = package.loaded[currentSceneModuleName]
-
-        if type(mod) == "table" and type(mod.unload) == "function" then
-            pcall(mod.unload)
+    if transition.state ~= "none" then return end
+    
+    transition.pendingAction = function()
+        -- Cleanup
+        if currentSceneModuleName then
+            local mod = package.loaded[currentSceneModuleName]
+            if type(mod) == "table" and type(mod.unload) == "function" then
+                pcall(mod.unload)
+            end
+            package.loaded[currentSceneModuleName] = nil
+            currentSceneModuleName = nil
+            collectgarbage("collect")
         end
 
-        package.loaded[currentSceneModuleName] = nil
-        currentSceneModuleName = nil
-        collectgarbage("collect")
+        -- Reset
+        if input then input:reset() end
+        lastDir = { x = 0, y = 0 }
+
+        -- Back to launcher
+        love.update = launcher_update
+        love.draw = launcher_draw
     end
-
-    -- Reset state
-    if input then input:reset() end
-    lastDir = { x = 0, y = 0 }
-
-    -- Restore callbacks
-    love.update = launcher_update
-    love.draw = launcher_draw
+    
+    transition.state = "fading_out"
+    transition.progress = 0.0
 end
 
 function launch(index)
     local info = scenes[index]
     if not info.implemented then return end
+    if transition.state ~= "none" then return end
+    
+    transition.pendingAction = function()
+        currentSceneModuleName = info.module
+        local scene = require(info.module)
+        if scene.load then scene.load() end
 
-    currentSceneModuleName = info.module
-    local scene = require(info.module)
+        love.update = function(dt)
+            updateTransition(dt)
+            if transition.state == "none" and scene.update then 
+                scene.update(dt) 
+            end
+        end
 
-    if scene.load then scene.load() end
-
-    -- Override callbacks
-    love.update = function(dt)
-        if scene.update then scene.update(dt) end
+        love.draw = function()
+            if scene.draw then scene.draw() end
+            drawTransition()
+        end
     end
-
-    love.draw = function()
-        if scene.draw then scene.draw() end
-    end
+    
+    transition.state = "fading_out"
+    transition.progress = 0.0
 end
 
--- LOVE2D CALLBACKS
+-- Love2D callbacks
 function love.load()        launcher_load() end
 function love.update(dt)    launcher_update(dt) end
 function love.draw()        launcher_draw() end
 
--- Export for games
+-- Export
 local M = { returnToLauncher = returnToLauncher }
 package.loaded["main"] = M
 return M
