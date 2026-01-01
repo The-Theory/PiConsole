@@ -46,7 +46,6 @@ end
 
 -- Setup window
 function UI:setupWindow()
-    love.window.setTitle(self.title)
     love.graphics.setDefaultFilter("linear", "linear", 1)
 end
 

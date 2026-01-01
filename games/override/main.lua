@@ -415,16 +415,20 @@ local Input = require("TiPiL.input")
 local UI = require("TiPiL.ui")
 local utils = require("TiPiL.utils")
 local game_common = require("TiPiL.game_common")
+local Enemies = require("games.override.enemies")
 
 local Scene = {}
 
 -- Game state
-local input, ui
+local input, ui, enemies
 local game = {
 	state = game_common.STATES.PLAYING,
 	player = {
+		position = {x = 0, y = 0},
+		velocity = {x = 0, y = 0},
 		health = 100,
-		speed = 100,
+		speed = 320,
+		size = 25,
 	},
 
 	mods = {
@@ -445,6 +449,11 @@ function Scene.load()
 
 	-- Initialize game state here
 	game.state = game_common.STATES.PLAYING
+	enemies = Enemies.new()
+	
+	-- Share game state with enemies module
+	Enemies.setGameState(game)
+	table.insert(game.enemies, enemies.enemyTypes.slugger())
 end
 
 function Scene.update(dt)
@@ -463,15 +472,36 @@ function Scene.update(dt)
 		return
 	end
 
-	-- Your game logic here
+	-- Update enemies
+	for _, enemy in ipairs(game.enemies) do enemy:update(dt) end
+
+	-- Player movement
+	if game.state == game_common.STATES.PLAYING then
+		local dx, dy = input:getAxisDeadzone(game_common.THRESHOLDS.MOVE)
+		dx, dy = utils.normalize(dx, dy)
+
+		game.player.velocity.x = dx * game.player.speed * dt
+		game.player.velocity.y = dy * game.player.speed * dt
+
+		game.player.position.x = game.player.position.x + game.player.velocity.x
+		game.player.position.y = game.player.position.y + game.player.velocity.y
+
+		-- Clamp player to screen bounds
+		local w, h = ui:getScreen()
+		game.player.position.x = utils.clamp(game.player.position.x, 0, w - game.player.size)
+		game.player.position.y = utils.clamp(game.player.position.y, 0, h - game.player.size)
+	end
 end
 
 function Scene.draw()
 	ui:clear()
 
-	local w, h = ui:getScreen()
+	-- Render enemies
+	for _, enemy in ipairs(game.enemies) do enemy:render() end
 
-	-- Your drawing code here
+	-- Render player
+	love.graphics.setColor(0x2e/255, 0xc4/255, 0xff/255, 1)
+	love.graphics.rectangle("fill", game.player.position.x, game.player.position.y, game.player.size, game.player.size)
 
 	-- Overlays
 	if game.state == game_common.STATES.GAME_OVER then
