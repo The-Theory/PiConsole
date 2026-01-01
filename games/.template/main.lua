@@ -1,4 +1,4 @@
----@diagnostic disable: undefined-global
+---@diagnostic disable: undefined-global, need-check-nil, undefined-field
 
 -- Shared libraries
 local Input = require("TiPiL.input")

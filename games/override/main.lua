@@ -410,17 +410,22 @@ movement, decision-making, or clarity,
 it does not get added.
 ]]--
 
--- Shared libraries
+----------------------------------------------------------------------
+-- Libraries ---------------------------------------------------------
+----------------------------------------------------------------------
 local Input = require("TiPiL.input")
 local UI = require("TiPiL.ui")
 local utils = require("TiPiL.utils")
 local game_common = require("TiPiL.game_common")
 local Enemies = require("games.override.enemies")
 
-local Scene = {}
 
--- Game state
+
+----------------------------------------------------------------------
+-- Game state ---------------------------------------------------------
+----------------------------------------------------------------------
 local input, ui, enemies
+local Scene = {}
 local game = {
 	state = game_common.STATES.PLAYING,
 	player = {
@@ -441,7 +446,11 @@ local game = {
 	enemies = {},
 }
 
--- Scene callbacks
+
+
+----------------------------------------------------------------------
+-- Load --------------------------------------------------------------
+----------------------------------------------------------------------
 function Scene.load()
 	input = Input.new()
 	ui = UI.new("New Game")
@@ -456,6 +465,11 @@ function Scene.load()
 	table.insert(game.enemies, enemies.enemyTypes.slugger())
 end
 
+
+
+----------------------------------------------------------------------
+-- Update ------------------------------------------------------------
+----------------------------------------------------------------------
 function Scene.update(dt)
 	input:update(dt)
 
@@ -493,13 +507,18 @@ function Scene.update(dt)
 	end
 end
 
+
+
+----------------------------------------------------------------------
+-- Draw ------------------------------------------------------------
+----------------------------------------------------------------------
 function Scene.draw()
 	ui:clear()
 
-	-- Render enemies
+	-- Enemies
 	for _, enemy in ipairs(game.enemies) do enemy:render() end
 
-	-- Render player
+	-- Player
 	love.graphics.setColor(0x2e/255, 0xc4/255, 0xff/255, 1)
 	love.graphics.rectangle("fill", game.player.position.x, game.player.position.y, game.player.size, game.player.size)
 
