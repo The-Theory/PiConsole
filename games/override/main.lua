@@ -418,13 +418,14 @@ local UI = require("TiPiL.ui")
 local utils = require("TiPiL.utils")
 local game_common = require("TiPiL.game_common")
 local Enemies = require("games.override.enemies")
+local Mods = require("games.override.mods")
 
 
 
 ----------------------------------------------------------------------
 -- Game state ---------------------------------------------------------
 ----------------------------------------------------------------------
-local input, ui, enemies
+local input, ui, enemies, mods
 local Scene = {}
 local game = {
 	state = game_common.STATES.PLAYING,
@@ -433,7 +434,7 @@ local game = {
 		velocity = {x = 0, y = 0},
 		health = 100,
 		speed = 320,
-		size = 25,
+		size = 20,
 	},
 
 	mods = {
@@ -444,25 +445,108 @@ local game = {
 	},
 
 	enemies = {},
+	closestEnemy = nil,
+	enemyCooldown = 1.5	,
+	enemyCooldownTimer = 0,
+	ui = nil,
 }
 
+
+
+----------------------------------------------------------------------
+-- Colors ------------------------------------------------------------
+----------------------------------------------------------------------
+local COLORS = {
+	background = {0.11, 0.11, 0.145},
+	player = {0x2e/255, 0xc4/255, 0xff/255},
+}
+
+
+
+----------------------------------------------------------------------
+-- Game utilities ----------------------------------------------------
+----------------------------------------------------------------------
+local function getNewEnemy()
+	local enemy = enemies.enemyTypes.slugger()
+		
+	-- Spawn enemy on screen bounds
+	local w, h = ui:getScreen()
+	local edge = math.random(4) -- 1=top, 2=right, 3=bottom, 4=left
+	local offset = enemy.size * 2
+	
+	if edge == 1 then      -- Top edge
+		enemy.position.x = math.random(0, w - enemy.size)
+		enemy.position.y = -offset
+	elseif edge == 2 then  -- Right edge
+		enemy.position.x = w + offset
+		enemy.position.y = math.random(0, h - enemy.size)
+	elseif edge == 3 then  -- Bottom edge
+		enemy.position.x = math.random(0, w - enemy.size)
+		enemy.position.y = h + offset
+	elseif edge == 4 then  -- Left edge
+		enemy.position.x = -offset
+		enemy.position.y = math.random(0, h - enemy.size)
+	end
+	return enemy
+end
+
+local function findClosestEnemy()
+	if #game.enemies == 0 then
+		return nil
+	end
+	
+	local playerCenterX = game.player.position.x + game.player.size / 2
+	local playerCenterY = game.player.position.y + game.player.size / 2
+	
+	local closestEnemy = nil
+	local closestDistance = math.huge
+	local w, h = ui:getScreen()
+	
+	for _, enemy in ipairs(game.enemies) do
+		if utils.rectCollision(
+			enemy.position.x, enemy.position.y, enemy.size, enemy.size,
+			0, 0, w, h
+		) then
+			local enemyCenterX = enemy.position.x + enemy.size / 2
+			local enemyCenterY = enemy.position.y + enemy.size / 2
+			local dist = utils.distance(playerCenterX, playerCenterY, enemyCenterX, enemyCenterY)
+			
+			if dist < closestDistance then
+				closestDistance = dist
+				closestEnemy = enemy
+			end
+		end
+	end
+	
+	return closestEnemy
+end
 
 
 ----------------------------------------------------------------------
 -- Load --------------------------------------------------------------
 ----------------------------------------------------------------------
 function Scene.load()
+	-- Initialize input system
 	input = Input.new()
-	ui = UI.new("New Game")
-	ui:setupWindow()
-
-	-- Initialize game state here
-	game.state = game_common.STATES.PLAYING
 	enemies = Enemies.new()
+	ui = UI.new("New Game")
+	mods = Mods.new()
 	
-	-- Share game state with enemies module
+	-- Initialize UI
+	local w, h = ui:getScreen()
+	ui:setupWindow()
+	game.ui = ui	
+	
+	-- Share game state
 	Enemies.setGameState(game)
-	table.insert(game.enemies, enemies.enemyTypes.slugger())
+	Mods.setGameState(game)
+	
+	-- Prepare game state
+	game.state = game_common.STATES.PLAYING
+	game.mods.weapon = mods.weaponTypes.basic()
+	game.player.position.x = (w - game.player.size) / 2
+	game.player.position.y = (h - game.player.size) / 2
+	for _ = 1, 5 do table.insert(game.enemies, getNewEnemy()) end
 end
 
 
@@ -480,30 +564,41 @@ function Scene.update(dt)
 
 	-- Handle game over/restart input
 	if game.state ~= game_common.STATES.PLAYING then
-		if game_common.handleResetInput(input, game.state, Scene.load) then
-			return
-		end
-		return
+		if game_common.handleResetInput(input, game.state, Scene.load) then return end
+	end
+
+	-- Spawn enemies
+	game.enemyCooldownTimer = game.enemyCooldownTimer - dt
+	if game.enemyCooldownTimer <= 0 then
+		game.enemyCooldownTimer = game.enemyCooldown
+		local enemy = getNewEnemy()
+		table.insert(game.enemies, enemy)
 	end
 
 	-- Update enemies
 	for _, enemy in ipairs(game.enemies) do enemy:update(dt) end
 
+	-- Update closest enemy
+	game.closestEnemy = findClosestEnemy()
+
 	-- Player movement
-	if game.state == game_common.STATES.PLAYING then
-		local dx, dy = input:getAxisDeadzone(game_common.THRESHOLDS.MOVE)
-		dx, dy = utils.normalize(dx, dy)
+	local dx, dy = input:getAxisDeadzone(game_common.THRESHOLDS.MOVE)
+	dx, dy = utils.normalize(dx, dy)
 
-		game.player.velocity.x = dx * game.player.speed * dt
-		game.player.velocity.y = dy * game.player.speed * dt
+	game.player.velocity.x = dx * game.player.speed * dt
+	game.player.velocity.y = dy * game.player.speed * dt
 
-		game.player.position.x = game.player.position.x + game.player.velocity.x
-		game.player.position.y = game.player.position.y + game.player.velocity.y
+	game.player.position.x = game.player.position.x + game.player.velocity.x
+	game.player.position.y = game.player.position.y + game.player.velocity.y
 
-		-- Clamp player to screen bounds
-		local w, h = ui:getScreen()
-		game.player.position.x = utils.clamp(game.player.position.x, 0, w - game.player.size)
-		game.player.position.y = utils.clamp(game.player.position.y, 0, h - game.player.size)
+	-- Clamp player to screen bounds
+	local w, h = ui:getScreen()
+	game.player.position.x = utils.clamp(game.player.position.x, 0, w - game.player.size)
+	game.player.position.y = utils.clamp(game.player.position.y, 0, h - game.player.size)
+	
+	-- Update weapon mod
+	if game.mods.weapon then
+		game.mods.weapon:update(dt, ui)
 	end
 end
 
@@ -513,13 +608,20 @@ end
 -- Draw ------------------------------------------------------------
 ----------------------------------------------------------------------
 function Scene.draw()
-	ui:clear()
+	ui:clear(COLORS.background)
+
+	if game.state ~= game_common.STATES.PLAYING then return end
 
 	-- Enemies
 	for _, enemy in ipairs(game.enemies) do enemy:render() end
 
+	-- Weapon mod rendering
+	if game.mods.weapon then
+		game.mods.weapon:render()
+	end
+
 	-- Player
-	love.graphics.setColor(0x2e/255, 0xc4/255, 0xff/255, 1)
+	love.graphics.setColor(COLORS.player)
 	love.graphics.rectangle("fill", game.player.position.x, game.player.position.y, game.player.size, game.player.size)
 
 	-- Overlays

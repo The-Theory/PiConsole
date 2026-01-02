@@ -248,8 +248,9 @@ function UI:drawScore(score, label, x, y, font)
 end
 
 -- Clear screen
-function UI:clear()
-    love.graphics.clear(UI.colors.background)
+function UI:clear(color)
+    if not color then color = UI.colors.background end
+    love.graphics.clear(color)
 end
 
 return UI
